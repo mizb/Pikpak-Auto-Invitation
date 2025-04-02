@@ -246,6 +246,30 @@ body {
     margin-right: 0.5rem;
 }
 
+/* Email Extraction Page */
+.email-list-container {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid var(--light-gray);
+    border-radius: 0.5rem;
+    margin-top: 1rem;
+}
+
+.email-list-container .list-group-item {
+    border-left: none;
+    border-right: none;
+    font-family: monospace;
+    font-size: 0.9rem;
+}
+
+.email-list-container .list-group-item:first-child {
+    border-top: none;
+}
+
+.email-list-container .list-group-item:last-child {
+    border-bottom: none;
+}
+
 /* Animation */
 @keyframes fadeIn {
     from {
@@ -392,4 +416,23 @@ footer {
     word-break: break-all;
     font-size: 0.875rem;
     font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+}
+
+/* Verification code styling */
+.verification-success-box {
+    text-align: center;
+    padding: 10px;
+}
+
+.verification-code {
+    font-family: monospace;
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: #198754;
+    letter-spacing: 2px;
+    padding: 10px 15px;
+    background-color: #f8f9fa;
+    border-radius: 6px;
+    display: inline-block;
+    margin: 10px 0;
 } 

@@ -56,7 +56,24 @@ const app = Vue.createApp({
             // 模态框实例
             accountViewModal: null,
             accountEditModal: null,
-            deleteConfirmModal: null
+            deleteConfirmModal: null,
+            
+            // Extract verification code tab
+            sourceData: '',
+            extractEmail: '',
+            extractPassword: '',
+            isFetchingCode: false,
+            verificationResult: null,
+            
+            // 邮箱提取页面
+            apiKey: '',
+            emailType: 'hotmail',
+            extractCount: 1,
+            isChecking: false,
+            isExtracting: false,
+            inventoryInfo: null,
+            balanceInfo: 0,
+            extractedEmails: [],
         }
     },
     computed: {
@@ -67,6 +84,14 @@ const app = Vue.createApp({
     mounted() {
         // 初始化Bootstrap模态框
         this.initModals();
+        
+        // 从localStorage加载API密钥
+        const savedApiKey = localStorage.getItem('apiKey');
+        if (savedApiKey) {
+            this.apiKey = savedApiKey;
+            // 自动加载库存和余额信息
+            this.checkInventoryAndBalance();
+        }
     },
     methods: {
         // 模态框初始化
@@ -488,7 +513,224 @@ const app = Vue.createApp({
                     console.error('无法复制到剪贴板:', err);
                     this.showAlert('复制失败，请手动复制', 'warning');
                 });
-        }
+        },
+        
+        // Parse source data to extract email and password
+        parseSourceData() {
+            if (!this.sourceData) {
+                // 尝试从剪贴板读取内容
+                navigator.clipboard.readText()
+                    .then(clipText => {
+                        if (clipText) {
+                            this.sourceData = clipText;
+                            // 递归调用解析方法
+                            this.parseSourceData();
+                        } else {
+                            this.showAlert('请输入源数据', 'warning');
+                        }
+                    })
+                    .catch(err => {
+                        console.error('无法读取剪贴板:', err);
+                        this.showAlert('请输入源数据', 'warning');
+                    });
+                return;
+            }
+            
+            // Split by ---- delimiter and extract first two parts
+            const parts = this.sourceData.split('----');
+            if (parts.length < 2) {
+                this.showAlert('格式错误，请确保数据包含使用----分隔的邮箱和密码', 'danger');
+                return;
+            }
+            
+            this.extractEmail = parts[0].trim();
+            this.extractPassword = parts[1].trim();
+            
+            if (!this.extractEmail || !this.extractPassword) {
+                this.showAlert('解析后的邮箱或密码为空，请检查格式', 'warning');
+            } else {
+                this.showAlert('数据解析成功', 'success');
+            }
+        },
+        
+        // Fetch verification code from the server
+        fetchVerificationCode() {
+            if (!this.extractEmail || !this.extractPassword) {
+                this.showAlert('邮箱和密码不能为空', 'warning');
+                return;
+            }
+            
+            this.isFetchingCode = true;
+            this.verificationResult = null;
+            
+            const formData = new FormData();
+            formData.append('email', this.extractEmail);
+            formData.append('password', this.extractPassword);
+            
+            axios.post('/get_verification', formData)
+                .then(response => {
+                    this.verificationResult = response.data;
+                    if (response.data.code === 200) {
+                        this.showAlert('验证码获取成功', 'success');
+                    } else {
+                        this.showAlert('验证码获取失败: ' + response.data.msg, 'danger');
+                    }
+                })
+                .catch(error => {
+                    console.error(error);
+                    this.showAlert('请求失败，请检查网络连接', 'danger');
+                })
+                .finally(() => {
+                    this.isFetchingCode = false;
+                });
+        },
+        
+        // Copy verification code to clipboard
+        copyVerificationCode() {
+            if (this.verificationResult && this.verificationResult.verification_code) {
+                navigator.clipboard.writeText(this.verificationResult.verification_code)
+                    .then(() => {
+                        this.showAlert('验证码已复制到剪贴板', 'success');
+                    })
+                    .catch(err => {
+                        console.error('无法复制验证码: ', err);
+                        this.showAlert('复制验证码失败', 'danger');
+                    });
+            }
+        },
+        
+        // Clear source data label when input changes
+        clearSourceDataLabel() {
+            // This method is called by the @input event on the textarea
+            // The label will be hidden automatically by the v-if directive
+        },
+        
+        // 邮箱提取相关方法
+        async checkInventoryAndBalance() {
+            if (!this.apiKey) {
+                this.showAlert('请输入API密钥', 'warning');
+                return;
+            }
+            
+            // 保存API密钥到localStorage
+            localStorage.setItem('apiKey', this.apiKey);
+            
+            this.isChecking = true;
+            this.clearAlert();
+            
+            try {
+                // 获取库存信息
+                const inventoryResponse = await axios.get('/check_email_inventory');
+                
+                if (inventoryResponse.data.status === 'success') {
+                    this.inventoryInfo = inventoryResponse.data.inventory;
+                } else {
+                    this.showAlert('获取库存信息失败: ' + inventoryResponse.data.message, 'danger');
+                }
+                
+                // 获取余额信息
+                const balanceResponse = await axios.get('/check_balance', {
+                    params: { card: this.apiKey }
+                });
+                
+                if (balanceResponse.data.status === 'success') {
+                    if (balanceResponse.data.balance && typeof balanceResponse.data.balance === 'object') {
+                        this.balanceInfo = balanceResponse.data.balance.num || 0;
+                    } else {
+                        this.balanceInfo = balanceResponse.data.balance || 0;
+                    }
+                } else {
+                    this.showAlert('获取余额信息失败: ' + balanceResponse.data.message, 'danger');
+                }
+                
+                this.showAlert('库存和余额信息已更新', 'success');
+            } catch (error) {
+                console.error('获取信息失败:', error);
+                this.showAlert('获取信息失败，请检查网络连接或重试', 'danger');
+            } finally {
+                this.isChecking = false;
+            }
+        },
+        
+        async extractEmails() {
+            if (!this.apiKey) {
+                this.showAlert('请输入API密钥', 'warning');
+                return;
+            }
+            
+            if (!this.emailType) {
+                this.showAlert('请选择邮箱类型', 'warning');
+                return;
+            }
+            
+            if (!this.extractCount || this.extractCount < 1 || this.extractCount > 2000) {
+                this.showAlert('提取数量必须在1到2000之间', 'warning');
+                return;
+            }
+            
+            this.isExtracting = true;
+            this.clearAlert();
+            
+            try {
+                const response = await axios.get('/extract_emails', {
+                    params: {
+                        card: this.apiKey,
+                        shuliang: this.extractCount,
+                        leixing: this.emailType
+                    }
+                });
+                
+                if (response.data.status === 'success') {
+                    this.extractedEmails = response.data.emails;
+                    this.showAlert(`成功提取 ${response.data.count} 个邮箱`, 'success');
+                    
+                    // 提取成功后刷新余额
+                    this.updateBalanceAfterExtraction();
+                } else {
+                    this.showAlert('提取邮箱失败: ' + response.data.message, 'danger');
+                }
+            } catch (error) {
+                console.error('提取邮箱失败:', error);
+                this.showAlert('提取邮箱失败，请检查网络连接或重试', 'danger');
+            } finally {
+                this.isExtracting = false;
+            }
+        },
+        
+        async updateBalanceAfterExtraction() {
+            try {
+                const balanceResponse = await axios.get('/check_balance', {
+                    params: { card: this.apiKey }
+                });
+                
+                if (balanceResponse.data.status === 'success') {
+                    if (balanceResponse.data.balance && typeof balanceResponse.data.balance === 'object') {
+                        this.balanceInfo = balanceResponse.data.balance.num || 0;
+                    } else {
+                        this.balanceInfo = balanceResponse.data.balance || 0;
+                    }
+                }
+            } catch (error) {
+                console.error('更新余额信息失败:', error);
+            }
+        },
+        
+        copyExtractedEmails() {
+            if (this.extractedEmails.length === 0) {
+                return;
+            }
+            
+            const emailsText = this.extractedEmails.join('\n');
+            
+            navigator.clipboard.writeText(emailsText)
+                .then(() => {
+                    this.showAlert('邮箱列表已复制到剪贴板', 'success');
+                })
+                .catch(err => {
+                    console.error('复制失败:', err);
+                    this.showAlert('复制失败，请手动复制', 'danger');
+                });
+        },
     }
 });
 

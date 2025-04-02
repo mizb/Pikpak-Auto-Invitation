@@ -719,7 +719,6 @@ def main():
                 input("按任意键退出程序")
                 return
                 
-            # 调整与 text.py 一致
             sign_encrypt_info = sign_encrypt(executor_info, pikpak.captcha_token, rtc_token, pikpak.use_proxy, pikpak.proxies)
             if not sign_encrypt_info or "request_id" not in sign_encrypt_info or "sign" not in sign_encrypt_info:
                 print("签名加密失败")
@@ -797,7 +796,6 @@ def main():
         import traceback
         traceback.print_exc()
         input("按任意键退出程序")
-    # save_account_info(name, account_info)
 
 
 if __name__ == "__main__":

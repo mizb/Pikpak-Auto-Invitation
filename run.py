@@ -1,25 +1,17 @@
-import hashlib
 import json
-import random
+import os
 import time
 import uuid
-import os
+import webbrowser
+
 import requests
-import base64
-from io import BytesIO
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
-from PIL import Image
-from werkzeug.utils import secure_filename
+from flask import Flask, render_template, request, jsonify, session
 
 # 导入 pikpak.py 中的函数
-from pikpak import (
-    ca_f_encrypt,
-    image_parse,
+from utils.email import connect_imap
+from utils.pikpak import (
     sign_encrypt,
-    d_encrypt,
-    captcha_sign_encrypt,
     captcha_image_parse,
-    image_download,
     ramdom_version,
     random_rtc_token,
     PikPak,
@@ -308,7 +300,7 @@ def register():
         "version": version,
         "user_id": signup_result.get("sub", ""),
         "access_token": signup_result.get("access_token", ""),
-        "refresh_token": signup_result.get("refresh_token", "")
+        "refresh_token": signup_result.get("refresh_token", ""),
     }
 
     # 保存账号信息
@@ -334,6 +326,24 @@ def test_proxy_route():
             "message": "代理连接测试成功" if result else "代理连接测试失败",
         }
     )
+
+
+@app.route("/get_verification", methods=["POST"])
+def get_verification():
+    """
+    处理获取验证码的请求
+    """
+    email_user = request.form["email"]
+    email_password = request.form["password"]
+
+    # 先尝试从收件箱获取验证码
+    result = connect_imap(email_user, email_password, "INBOX")
+
+    # 如果收件箱没有找到验证码，则尝试从垃圾邮件中查找
+    if result["code"] == 0:
+        result = connect_imap(email_user, email_password, "Junk")
+
+    return jsonify(result)
 
 
 @app.route("/fetch_accounts", methods=["GET"])
@@ -463,5 +473,143 @@ def activate_account():
         return jsonify({"status": "error", "message": f"操作失败: {str(e)}"})
 
 
+@app.route("/check_email_inventory", methods=["GET"])
+def check_email_inventory():
+    try:
+        # 发送请求到库存API
+        response = requests.get(
+            url="https://zizhu.shanyouxiang.com/kucun",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+            },
+            timeout=10,
+        )
+
+        if response.status_code == 200:
+            return jsonify({"status": "success", "inventory": response.json()})
+        else:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"获取库存失败: HTTP {response.status_code}",
+                }
+            )
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"获取库存时出错: {str(e)}"})
+
+
+@app.route("/check_balance", methods=["GET"])
+def check_balance():
+    try:
+        # 从请求参数中获取卡号
+        card = request.args.get("card")
+
+        if not card:
+            return jsonify({"status": "error", "message": "未提供卡号参数"})
+
+        # 发送请求到余额查询API
+        response = requests.get(
+            url="https://zizhu.shanyouxiang.com/yue",
+            params={"card": card},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+            },
+            timeout=10,
+        )
+
+        if response.status_code == 200:
+            return jsonify({"status": "success", "balance": response.json()})
+        else:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"查询余额失败: HTTP {response.status_code}",
+                }
+            )
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"查询余额时出错: {str(e)}"})
+
+
+@app.route("/extract_emails", methods=["GET"])
+def extract_emails():
+    try:
+        # 从请求参数中获取必需的参数
+        card = request.args.get("card")
+        shuliang = request.args.get("shuliang")
+        leixing = request.args.get("leixing")
+
+        # 验证必需的参数
+        if not card:
+            return jsonify({"status": "error", "message": "未提供卡号参数"})
+
+        if not shuliang:
+            return jsonify({"status": "error", "message": "未提供提取数量参数"})
+
+        if not leixing or leixing not in ["outlook", "hotmail"]:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "提取类型参数无效，必须为 outlook 或 hotmail",
+                }
+            )
+
+        # 尝试将数量转换为整数
+        try:
+            shuliang_int = int(shuliang)
+            if shuliang_int < 1 or shuliang_int > 2000:
+                return jsonify(
+                    {"status": "error", "message": "提取数量必须在1到2000之间"}
+                )
+        except ValueError:
+            return jsonify({"status": "error", "message": "提取数量必须为整数"})
+
+        # 发送请求到邮箱提取API
+        response = requests.get(
+            url="https://zizhu.shanyouxiang.com/huoqu",
+            params={"card": card, "shuliang": shuliang, "leixing": leixing},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+            },
+            timeout=30,  # 增加超时时间，因为提取大量邮箱可能需要更长时间
+        )
+
+        if response.status_code == 200:
+            # 根据响应的内容格式处理结果
+            # 检查响应是否为JSON格式
+            try:
+                json_response = response.json()
+                if isinstance(json_response, dict) and "msg" in json_response:
+                    return jsonify({"status": "warning", "message": json_response["msg"]})
+            except ValueError:
+                # 不是JSON格式,继续处理文本格式的响应
+                pass
+            response_text = response.text.strip()
+
+            # 解析响应文本为邮箱列表
+            emails = []
+            if response_text:
+                for line in response_text.split("\n"):
+                    if line.strip():
+                        emails.append(line.strip())
+
+            return jsonify(
+                {"status": "success", "emails": emails, "count": len(emails)}
+            )
+        else:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"提取邮箱失败: HTTP {response.status_code}",
+                    "response": response.text,
+                }
+            )
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"提取邮箱时出错: {str(e)}"})
+
+
 if __name__ == "__main__":
+    webbrowser.open('http://localhost:5000/')
     app.run(debug=False, host="0.0.0.0", port=5000)
