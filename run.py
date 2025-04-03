@@ -542,6 +542,8 @@ def extract_emails():
         card = request.args.get("card")
         shuliang = request.args.get("shuliang")
         leixing = request.args.get("leixing")
+        # 获取前端传递的重试次数计数器，如果没有则初始化为0
+        frontend_retry_count = int(request.args.get("retry_count", "0"))
 
         # 验证必需的参数
         if not card:
@@ -568,46 +570,100 @@ def extract_emails():
         except ValueError:
             return jsonify({"status": "error", "message": "提取数量必须为整数"})
 
-        # 发送请求到邮箱提取API
-        response = requests.get(
-            url="https://zizhu.shanyouxiang.com/huoqu",
-            params={"card": card, "shuliang": shuliang, "leixing": leixing},
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
-            },
-            timeout=30,  # 增加超时时间，因为提取大量邮箱可能需要更长时间
-        )
-
-        if response.status_code == 200:
-            # 根据响应的内容格式处理结果
-            # 检查响应是否为JSON格式
-            try:
-                json_response = response.json()
-                if isinstance(json_response, dict) and "msg" in json_response:
-                    return jsonify({"status": "warning", "message": json_response["msg"]})
-            except ValueError:
-                # 不是JSON格式,继续处理文本格式的响应
-                pass
-            response_text = response.text.strip()
-
-            # 解析响应文本为邮箱列表
-            emails = []
-            if response_text:
-                for line in response_text.split("\n"):
-                    if line.strip():
-                        emails.append(line.strip())
-
-            return jsonify(
-                {"status": "success", "emails": emails, "count": len(emails)}
+        # 后端重试计数器
+        retry_count = 0
+        max_retries = 20  # 单次后端请求的最大重试次数
+        retry_delay = 0   # 每次重试间隔秒数
+        
+        # 记录总的前端+后端重试次数，用于展示给用户
+        total_retry_count = frontend_retry_count
+        
+        while retry_count < max_retries:
+            # 发送请求到邮箱提取API
+            response = requests.get(
+                url="https://zizhu.shanyouxiang.com/huoqu",
+                params={"card": card, "shuliang": shuliang, "leixing": leixing},
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+                },
+                timeout=10,  # 降低单次请求的超时时间，以便更快地进行重试
             )
-        else:
-            return jsonify(
-                {
-                    "status": "error",
-                    "message": f"提取邮箱失败: HTTP {response.status_code}",
-                    "response": response.text,
-                }
-            )
+
+            if response.status_code == 200:
+                # 检查响应是否为JSON格式，如果是，通常表示没有库存
+                try:
+                    json_response = response.json()
+                    if isinstance(json_response, dict) and "msg" in json_response:
+                        # 没有库存，需要重试
+                        retry_count += 1
+                        total_retry_count += 1
+                        
+                        # 如果达到后端最大重试次数，返回特殊状态让前端继续重试
+                        if retry_count >= max_retries:
+                            return jsonify({
+                                "status": "retry", 
+                                "message": f"暂无库存: {json_response['msg']}，已重试{total_retry_count}次，继续尝试中...",
+                                "retry_count": total_retry_count
+                            })
+                        
+                        # 等待一段时间后重试
+                        time.sleep(retry_delay)
+                        continue
+                except ValueError:
+                    # 不是JSON格式，可能是成功的文本列表响应
+                    pass
+                
+                # 处理文本响应
+                response_text = response.text.strip()
+
+                # 解析响应文本为邮箱列表
+                emails = []
+                if response_text:
+                    for line in response_text.split("\n"):
+                        if line.strip():
+                            emails.append(line.strip())
+
+                # 如果没有实际提取到邮箱（可能是空文本响应），继续重试
+                if not emails:
+                    retry_count += 1
+                    total_retry_count += 1
+                    
+                    if retry_count >= max_retries:
+                        return jsonify({
+                            "status": "retry", 
+                            "message": f"未能获取到邮箱，已重试{total_retry_count}次，继续尝试中...",
+                            "retry_count": total_retry_count
+                        })
+                    
+                    time.sleep(retry_delay)
+                    continue
+
+                # 成功获取到邮箱，返回结果
+                return jsonify(
+                    {
+                        "status": "success", 
+                        "emails": emails, 
+                        "count": len(emails), 
+                        "retries": total_retry_count,
+                        "message": f"成功获取{len(emails)}个邮箱，总共重试{total_retry_count}次"
+                    }
+                )
+            else:
+                # 请求失败，返回错误
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": f"提取邮箱失败: HTTP {response.status_code}",
+                        "response": response.text,
+                    }
+                )
+
+        # 如果执行到这里，说明超过了最大重试次数
+        return jsonify({
+            "status": "retry",
+            "message": f"暂无邮箱库存，已重试{total_retry_count}次，继续尝试中...",
+            "retry_count": total_retry_count
+        })
 
     except Exception as e:
         return jsonify({"status": "error", "message": f"提取邮箱时出错: {str(e)}"})

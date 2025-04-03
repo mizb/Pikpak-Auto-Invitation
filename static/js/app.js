@@ -671,27 +671,51 @@ const app = Vue.createApp({
             this.isExtracting = true;
             this.clearAlert();
             
-            try {
-                const response = await axios.get('/extract_emails', {
-                    params: {
-                        card: this.apiKey,
-                        shuliang: this.extractCount,
-                        leixing: this.emailType
-                    }
-                });
-                
-                if (response.data.status === 'success') {
-                    this.extractedEmails = response.data.emails;
-                    this.showAlert(`成功提取 ${response.data.count} 个邮箱`, 'success');
+            // 用于递归重试
+            const makeRequest = async (retryCount = 0) => {
+                try {
+                    const response = await axios.get('/extract_emails', {
+                        params: {
+                            card: this.apiKey,
+                            shuliang: this.extractCount,
+                            leixing: this.emailType,
+                            retry_count: retryCount
+                        }
+                    });
                     
-                    // 提取成功后刷新余额
-                    this.updateBalanceAfterExtraction();
-                } else {
-                    this.showAlert('提取邮箱失败: ' + response.data.message, 'danger');
+                    if (response.data.status === 'success') {
+                        // 成功获取邮箱
+                        this.extractedEmails = response.data.emails;
+                        const totalRetries = response.data.retries || 0;
+                        this.showAlert(`成功提取 ${response.data.count} 个邮箱 (重试${totalRetries}次)`, 'success');
+                        
+                        // 提取成功后刷新余额
+                        this.updateBalanceAfterExtraction();
+                        return true;
+                    } else if (response.data.status === 'retry') {
+                        // 需要继续重试
+                        const newRetryCount = response.data.retry_count || (retryCount + 1);
+                        this.showAlert(response.data.message || `暂无邮箱库存，已重试${newRetryCount}次，继续尝试中...`, 'warning');
+                        
+                        // 使用setTimeout创建短暂延迟，避免阻塞UI
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                        
+                        // 递归重试
+                        return await makeRequest(newRetryCount);
+                    } else {
+                        // 其他错误状态
+                        this.showAlert('提取邮箱失败: ' + (response.data.message || '未知错误'), 'danger');
+                        return false;
+                    }
+                } catch (error) {
+                    console.error('提取邮箱失败:', error);
+                    this.showAlert('提取邮箱失败，请检查网络连接或重试', 'danger');
+                    return false;
                 }
-            } catch (error) {
-                console.error('提取邮箱失败:', error);
-                this.showAlert('提取邮箱失败，请检查网络连接或重试', 'danger');
+            };
+            
+            try {
+                await makeRequest();
             } finally {
                 this.isExtracting = false;
             }
