@@ -83,41 +83,53 @@ def image_parse(image, frames, use_proxy=False, proxies=None):
 def sign_encrypt(code, captcha_token, rtc_token, use_proxy=False, proxies=None):
     url = "https://api.kiteyuan.info/signEncrypt"
 
-    # 如果 code 是字符串而不是对象，则直接使用
+    # 檢查 code 是否為空或 None
+    if not code:
+        print("code 參數為空，無法進行加密")
+        return {"request_id": "", "sign": ""}
+
+    # 如果 code 是字符串而不是對象，則直接使用
     if isinstance(code, str):
         payload_data = code
     else:
-        payload_data = json.dumps(code)
-
-    payload = json.dumps({
-        "code": payload_data,
-        "captcha_token": captcha_token,
-        "rtc_token": rtc_token
-    })
-    headers = {
-        'Content-Type': 'application/json'
-    }
+        try:
+            payload_data = json.dumps(code)
+        except (TypeError, ValueError) as e:
+            print(f"code 參數序列化失敗: {e}")
+            return {"request_id": "", "sign": ""}
 
     try:
-        response = requests.request("POST", url, headers=headers, data=payload, proxies=proxies if use_proxy else None)
+        payload = json.dumps({
+            "code": payload_data,
+            "captcha_token": captcha_token,
+            "rtc_token": rtc_token
+        })
+        headers = {
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.request("POST", url, headers=headers, data=payload, proxies=proxies if use_proxy else None, timeout=30)
         response.raise_for_status()
         if not response.text:
-            print(f"API响应为空: {url}")
+            print(f"API響應為空: {url}")
             return {"request_id": "", "sign": ""}
         
-        # 解析响应以确保与 text.py 行为一致
+        # 解析響應以確保與 text.py 行為一致
         result = json.loads(response.text)
         if "request_id" not in result or "sign" not in result:
-            print(f"API响应缺少关键字段: {result}")
+            print(f"API響應缺少關鍵字段: {result}")
             return {"request_id": "", "sign": ""}
         return result
     except requests.exceptions.RequestException as e:
-        print(f"API请求失败: {e}")
+        print(f"API請求失敗: {e}")
         if use_proxy:
-            print(f"当前使用的代理: {proxies}")
+            print(f"當前使用的代理: {proxies}")
         return {"request_id": "", "sign": ""}
     except json.JSONDecodeError as e:
-        print(f"JSON解析错误: {e}, 响应内容: {response.text}")
+        print(f"JSON解析錯誤: {e}, 響應內容: {response.text}")
+        return {"request_id": "", "sign": ""}
+    except Exception as e:
+        print(f"未知錯誤: {e}")
         return {"request_id": "", "sign": ""}
 
 
@@ -406,34 +418,49 @@ class PikPak:
         return response
 
     def executor(self):
-        url = "https://api-drive.mypikpak.com/captcha-jsonp/v2/executor?callback=handleJsonpResult_1741687514856"
-        headers = {'pragma': 'no-cache'}
-        response = self.send_request("GET", url, headers=headers)
+        url = "https://api-drive.mypikpak.com/captcha-jsonp/v2/executor?callback=handleJsonpResult_" + str(int(time.time() * 1000))
+        headers = {'pragma': 'no-cache', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'}
         
-        # 处理 JSONP 响应格式
         try:
-            if isinstance(response, str) and "handleJsonpResult" in response:
-                # 提取 JSON 部分，JSONP 格式通常是 callback(json数据)
-                start_index = response.find('(')
-                end_index = response.rfind(')')
+            # 使用普通 requests 而不是 self.send_request 以獲取原始響應
+            response = requests.get(url, headers=headers, proxies=self.proxies if self.use_proxy else None, timeout=30)
+            response.raise_for_status()  # 檢查 HTTP 狀態碼
+            
+            content = response.text
+            print(f"executor 原始響應: {content}")
+            
+            # 如果內容為空，直接返回空字符串
+            if not content:
+                print("executor 響應內容為空")
+                return ""
+            
+            # 處理 JSONP 響應格式
+            if "handleJsonpResult" in content:
+                # 提取 JSON 部分，JSONP 格式通常是 callback(json數據)
+                start_index = content.find('(')
+                end_index = content.rfind(')')
                 
                 if start_index != -1 and end_index != -1:
-                    json_str = response[start_index + 1:end_index]
-                    # 有时 JSONP 响应中包含反引号，需要去除
+                    json_str = content[start_index + 1:end_index]
+                    # 有時 JSONP 響應中包含反引號，需要去除
                     if json_str.startswith('`') and json_str.endswith('`'):
                         json_str = json_str[1:-1]
                     
                     return json_str
                 else:
-                    print(f"无法从JSONP响应中提取有效内容: {response}")
+                    print(f"無法從JSONP響應中提取有效內容: {content}")
                     return ""
-            elif isinstance(response, dict):
-                return response
+            elif isinstance(content, str) and (content.startswith('{') or content.startswith('[')):
+                # 可能是直接返回的 JSON 字符串
+                return content
             else:
-                print(f"未知的响应格式: {response}")
+                print(f"未知的響應格式: {content}")
                 return ""
+        except requests.exceptions.RequestException as e:
+            print(f"執行 executor 請求失敗: {e}")
+            return ""
         except Exception as e:
-            print(f"解析 executor 响应失败: {e}")
+            print(f"解析 executor 響應失敗: {e}")
             return ""
 
     def report(self, request_id, sign, pid, trace_id):
