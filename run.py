@@ -27,7 +27,10 @@ app.secret_key = os.urandom(24)
 def index():
     return render_template("index.html")
 
-
+@app.route('/health')
+def health_check():
+    return jsonify({"status": "OK"})
+    
 @app.route("/initialize", methods=["POST"])
 def initialize():
     # 获取用户表单输入
