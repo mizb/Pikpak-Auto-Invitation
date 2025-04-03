@@ -7,6 +7,8 @@ services:
     environment:
       - FLASK_ENV=production
     restart: always
+    volumes:
+      - ./data/account:/app/account
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
       interval: 30s
