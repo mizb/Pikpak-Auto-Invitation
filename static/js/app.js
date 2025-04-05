@@ -85,8 +85,13 @@ const app = Vue.createApp({
         // 初始化Bootstrap模态框
         this.initModals();
         
-        // 从localStorage加载API密钥
+        // 从localStorage加载API密钥和邀请码
         const savedApiKey = localStorage.getItem('apiKey');
+        const savedInviteCode = localStorage.getItem('inviteCode');
+        if (savedInviteCode) {
+            this.inviteCode = savedInviteCode;
+        }
+
         if (savedApiKey) {
             this.apiKey = savedApiKey;
             // 自动加载库存和余额信息
@@ -188,6 +193,8 @@ const app = Vue.createApp({
                 formData.append('email', this.email);
                 
                 const response = await axios.post('/initialize', formData);
+                // 保存邀请码到localStorage
+                localStorage.setItem('inviteCode', this.inviteCode);
                 
                 if (response.data.status === 'success') {
                     this.deviceId = response.data.device_id;

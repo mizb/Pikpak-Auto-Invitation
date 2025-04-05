@@ -8,7 +8,7 @@ import requests
 from flask import Flask, render_template, request, jsonify, session
 
 # 导入 pikpak.py 中的函数
-from utils.email import connect_imap
+from utils.pk_email import connect_imap
 from utils.pikpak import (
     sign_encrypt,
     captcha_image_parse,
